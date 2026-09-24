@@ -1,5 +1,7 @@
 package com.ceos24.springboot.theater.service;
 
+import com.ceos24.springboot.global.exception.ErrorCode;
+import com.ceos24.springboot.global.exception.GlobalException;
 import com.ceos24.springboot.theater.domain.Region;
 import com.ceos24.springboot.theater.domain.Theater;
 import com.ceos24.springboot.theater.dto.TheaterCreateRequest;
@@ -47,15 +49,10 @@ public class TheaterService {
     }
 
     // 영화관 하나 조회
-    public TheaterResponse getTheater(Long theaterId) {
-
-        Theater theater = theaterRepository.findById(theaterId)
+    public Theater getTheater(Long theaterId) {
+        return theaterRepository.findById(theaterId)
                 .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "해당 영화관을 찾을 수 없습니다. theaterId=" + theaterId
-                        )
+                        new GlobalException(ErrorCode.THEATER_NOT_FOUND)
                 );
-
-        return TheaterResponse.from(theater);
     }
 }

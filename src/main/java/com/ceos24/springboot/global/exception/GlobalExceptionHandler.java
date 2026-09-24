@@ -5,12 +5,28 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-
-// Controller에서 예외가 발생하면 여기서 공통으로 처리!!
+// Controller에서 예외가 발생하면 여기서 공통으로 처리
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-//    IllegalArgumentException이 발생하면 이 메서드를 실행함.
+    // 우리가 직접 정의한 GlobalException 처리
+    @ExceptionHandler(GlobalException.class)
+    public ResponseEntity<ErrorResponse> handleGlobalException(
+            GlobalException e
+    ) {
+        ErrorCode errorCode = e.getErrorCode();
+
+        ErrorResponse response = ErrorResponse.of(
+                errorCode.getStatus(),
+                errorCode.getMessage()
+        );
+
+        return ResponseEntity
+                .status(errorCode.getStatus())
+                .body(response);
+    }
+
+    // IllegalArgumentException 처리
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleIllegalArgumentException(
             IllegalArgumentException e

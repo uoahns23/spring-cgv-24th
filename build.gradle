@@ -19,7 +19,7 @@ repositories {
 }
 
 dependencies {
-    // SPING MVC
+    // SPRING MVC
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 
     // JPA
