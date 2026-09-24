@@ -48,6 +48,6 @@ public class Screen {
         this.screenName = screenName;
         this.screenType = screenType;
         this.rowCount = rowCount;
-        this.colCount = this.colCount;
+        this.colCount = colCount;
     }
 }
