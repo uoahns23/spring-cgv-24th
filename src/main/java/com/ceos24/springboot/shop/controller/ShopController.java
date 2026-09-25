@@ -61,6 +61,24 @@ public class ShopController {
         );
     }
 
+//  매점 재고 추가
+    @PatchMapping("/{theaterId}/inventories/{inventoryId}/addStock")
+    public ResponseEntity<InventoryResponse> addStock(
+            @PathVariable Long theaterId,
+            @PathVariable Long inventoryId,
+            @RequestParam Integer addQuantity //요청값이 하나이므로
+    ) {
+
+        InventoryResponse response =
+                shopService.addStock(
+                        theaterId,
+                        inventoryId,
+                        addQuantity
+                );
+
+        return ResponseEntity.ok(response);
+    }
+
 
     // 매점 주문
     @Operation(

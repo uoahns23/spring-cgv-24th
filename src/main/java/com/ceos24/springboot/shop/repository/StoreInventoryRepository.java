@@ -22,4 +22,9 @@ public interface StoreInventoryRepository
             Theater theater,
             Menu menu
     );
+
+    Optional<StoreInventory> findByIdAndTheater(
+            Long inventoryId,
+            Theater theater
+    );
 }
