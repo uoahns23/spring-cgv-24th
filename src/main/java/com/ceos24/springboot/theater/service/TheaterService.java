@@ -24,8 +24,12 @@ public class TheaterService {
     @Transactional
     public TheaterResponse createTheater(TheaterCreateRequest request) {
 
-        Theater savedTheater =
-                theaterRepository.save(request.toEntity());
+        Theater theater = Theater.create(
+                request.theaterName(),
+                request.region()
+        );
+
+        Theater savedTheater = theaterRepository.save(theater);
 
         return TheaterResponse.from(savedTheater);
     }
