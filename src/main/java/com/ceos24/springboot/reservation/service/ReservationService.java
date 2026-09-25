@@ -97,7 +97,7 @@ public class ReservationService {
                 .seniorCount(request.seniorCount())
                 .seatNumbers(request.seatNumbers())
                 .totalPrice(totalPrice)
-                .status(ReservationStatus.Reservated)
+                .status(ReservationStatus.Reserved)
                 .reservationAt(LocalDateTime.now())
                 .build();
 
