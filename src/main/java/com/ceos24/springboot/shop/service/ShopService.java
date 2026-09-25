@@ -116,7 +116,7 @@ public class ShopService {
 
         StoreInventory inventory =
                 storeInventoryRepository
-                        .findByIdAndTheater(inventoryId, theater)
+                        .findByInventoryIdAndTheater(inventoryId, theater)
                         .orElseThrow(() ->
                                 new IllegalArgumentException(
                                         "해당 영화관의 재고를 찾을 수 없습니다."

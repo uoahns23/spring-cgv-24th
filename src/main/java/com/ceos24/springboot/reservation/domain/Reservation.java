@@ -43,9 +43,6 @@ public class Reservation {
     @Column(name = "senior_count")
     private Integer seniorCount;
 
-    @Column(name = "seat_numbers")
-    private String seatNumbers;
-
     @Column(name = "total_price")
     private Integer totalPrice;
 
@@ -64,7 +61,6 @@ public class Reservation {
             Integer youthCount,
             Integer adultCount,
             Integer seniorCount,
-            String seatNumbers,
             Integer totalPrice,
             ReservationStatus status,
             LocalDateTime reservationAt
@@ -75,7 +71,6 @@ public class Reservation {
         this.youthCount = youthCount;
         this.adultCount = adultCount;
         this.seniorCount = seniorCount;
-        this.seatNumbers = seatNumbers;
         this.totalPrice = totalPrice;
         this.status = status;
         this.reservationAt = reservationAt;
