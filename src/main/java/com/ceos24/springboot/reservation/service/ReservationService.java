@@ -12,6 +12,7 @@ import com.ceos24.springboot.theater.domain.Seat;
 import com.ceos24.springboot.theater.repository.ScreeningRepository;
 import com.ceos24.springboot.theater.repository.SeatRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,7 +41,7 @@ public class ReservationService {
 
         // 1. 상영회차 조회
         Screening screening = screeningRepository
-                .findById(request.screeningId())
+                .findByIdWithLock(request.screeningId())
                 .orElseThrow(() ->
                         new IllegalArgumentException(
                                 "해당 상영회차를 찾을 수 없습니다. screeningId="
@@ -186,8 +187,13 @@ public class ReservationService {
                         )
                         .toList();
 
-        // 13. ReservationSeat 저장
-        reservationSeatRepository.saveAll(reservationSeats);
+        // 13. ReservationSeat 저장 및 UNIQUE 위반 여부 판단
+        try {reservationSeatRepository.saveAllAndFlush(reservationSeats);
+        } catch (DataIntegrityViolationException e) {
+            throw new IllegalArgumentException(
+                    "이미 예약된 좌석이 포함되어 있습니다."
+            );
+        }
 
         return ReservationResponse.from(savedReservation,seats);
     }
