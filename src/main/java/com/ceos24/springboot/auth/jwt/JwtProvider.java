@@ -1,8 +1,8 @@
 package com.ceos24.springboot.auth.jwt;
 
-import io.jsonwebtoken.JwtException;
-import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
+import io.jsonwebtoken.security.SignatureException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -27,6 +27,7 @@ public class JwtProvider {
         this.accessTokenExpiration = accessTokenExpiration;
     }
 
+    // Access Token 생성
     public String createAccessToken(Long userId) {
 
         Date now = new Date();
@@ -42,30 +43,47 @@ public class JwtProvider {
                 .compact();
     }
 
-    // JWT 파싱과 서명 검증
-    public boolean validateToken(String token) {
-        try {
-            Jwts.parser()
-                    .verifyWith(secretKey)
-                    .build()
-                    .parseSignedClaims(token);
 
+    // JWT 검증
+    public boolean validateToken(String token) {
+
+        try {
+            parseClaims(token);
             return true;
 
+        } catch (ExpiredJwtException e) {
+            // 만료된 토큰
+            return false;
+
+        } catch (SignatureException e) {
+            // 서명이 올바르지 않거나 변조된 토큰
+            return false;
+
+        } catch (MalformedJwtException e) {
+            // JWT 형식이 올바르지 않은 토큰
+            return false;
+
         } catch (JwtException | IllegalArgumentException e) {
+            // 그 외 잘못된 JWT
             return false;
         }
     }
 
+    // 검증된 JWT에서 사용자 ID 추출
     public Long getUserId(String token) {
 
-        String subject = Jwts.parser()
+        Claims claims = parseClaims(token);
+
+        return Long.valueOf(claims.getSubject());
+    }
+
+    // JWT 파싱 & 서명/만료 검증
+    private Claims parseClaims(String token) {
+
+        return Jwts.parser()
                 .verifyWith(secretKey)
                 .build()
                 .parseSignedClaims(token)
-                .getPayload()
-                .getSubject();
-
-        return Long.valueOf(subject);
+                .getPayload();
     }
 }
