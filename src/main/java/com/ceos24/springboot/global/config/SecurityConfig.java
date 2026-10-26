@@ -76,14 +76,18 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // 로그인
                         .requestMatchers("/api/auth/login").permitAll()
+                        // 회원가입
+                        .requestMatchers(HttpMethod.POST, "/api/auth/signup").permitAll()
 
                         // 공개 조회 API
                         .requestMatchers(HttpMethod.GET, "/api/movies","/api/movies/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/theaters", "/api/theaters/**").permitAll()
 
 
+
+
                         // 관리자 전용 API
-                        .requestMatchers("/api/admin/**").hasRole("ADMIN") // ROLE_ADMIN
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN") // 관리자 가입이 여기에 해당함.
                         // 영화 등록 API
                         .requestMatchers(HttpMethod.POST, "/api/movies").hasRole("ADMIN")
                         // 영화관 등록 API
@@ -94,6 +98,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/shop/*/inventories").hasRole("ADMIN")
                         // 매점 재고 추가 API
                         .requestMatchers(HttpMethod.PATCH, "/api/shop/*/inventories/*/addStock").hasRole("ADMIN")
+
+
 
 
                         // 그 외 요청은 인증 필요

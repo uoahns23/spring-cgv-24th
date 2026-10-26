@@ -58,6 +58,12 @@ public enum ErrorCode {
     ACCESS_DENIED(
             HttpStatus.FORBIDDEN,
         "접근 권한이 없습니다."
+    ),
+
+    // Signup
+    DUPLICATE_EMAIL(
+            HttpStatus.CONFLICT,
+        "이미 사용 중인 이메일입니다."
     );
 
     private final HttpStatus status;

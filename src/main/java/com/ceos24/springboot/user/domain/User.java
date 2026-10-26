@@ -54,6 +54,7 @@ public class User {
         this.role = Role.USER; // 자동으로 회원으로 지정
     }
 
+    // 일반 회원 생성
     public static User create(
             String name,
             String email,
@@ -61,5 +62,17 @@ public class User {
             String phone
     ) {
         return new User(name, email, password, phone);
+    }
+
+    // 관리자 생성
+    public static User createAdmin(
+            String name,
+            String email,
+            String encodedPassword,
+            String phone
+    ) {
+        User admin = new User(name, email, encodedPassword, phone);
+        admin.role = Role.ADMIN;
+        return admin;
     }
 }
