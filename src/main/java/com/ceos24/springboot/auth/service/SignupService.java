@@ -13,6 +13,7 @@ import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -68,19 +69,43 @@ public class SignupService {
         }
     }
 
+    // 이메일 중복여부 확인
     private boolean isEmailUniqueViolation(Throwable exception) {
         Throwable cause = exception;
 
         while (cause != null) {
-            if (cause instanceof ConstraintViolationException constraintException) {
-                return EMAIL_UNIQUE_CONSTRAINT.equals(
-                        constraintException.getConstraintName()
-                );
+            if (cause instanceof ConstraintViolationException violation
+                    && matchesEmailConstraint(violation.getConstraintName())) {
+                return true;
             }
             cause = cause.getCause();
         }
 
         return false;
+    }
 
+    private boolean matchesEmailConstraint(String constraintName) {
+        if (constraintName == null) {
+            return false;
+        }
+
+        String name = constraintName
+                .replace("\"", "")
+                .replace("`", "")
+                .trim();
+
+        // H2: PUBLIC.UK_USERS_EMAIL INDEX PUBLIC.UK_USERS_EMAIL_INDEX_...
+        int indexPosition = name.toUpperCase(Locale.ROOT).indexOf(" INDEX ");
+        if (indexPosition >= 0) {
+            name = name.substring(0, indexPosition);
+        }
+
+        // 스키마명 또는 테이블명 접두사 제거
+        int dotPosition = name.lastIndexOf('.');
+        if (dotPosition >= 0) {
+            name = name.substring(dotPosition + 1);
+        }
+
+        return EMAIL_UNIQUE_CONSTRAINT.equalsIgnoreCase(name.trim());
     }
 }

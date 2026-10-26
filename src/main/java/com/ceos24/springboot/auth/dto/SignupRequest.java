@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Size;
 
 public record SignupRequest(
 
+        @Size(max = 255)
         @NotBlank(message = "이름은 필수입니다.")
         String name,
 
@@ -17,6 +18,7 @@ public record SignupRequest(
         @Size(min = 8, max = 20, message = "비밀번호는 8자 이상 20자 이하로 입력해야 합니다.")
         String password,
 
+        @Size(max = 20)
         @NotBlank(message = "전화번호는 필수입니다.")
         String phone
 ) {

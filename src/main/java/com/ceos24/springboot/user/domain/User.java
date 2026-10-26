@@ -10,7 +10,8 @@ import java.time.LocalDateTime;
 
 @Entity
 @Getter
-@Table(name = "cgv_user")
+@Table(name = "cgv_user", uniqueConstraints = {
+@UniqueConstraint(name = "uk_users_email",columnNames = "email")})
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class User {
 
@@ -27,7 +28,7 @@ public class User {
     private Role role;
 
 //  사용자 로그인 아이디로 email을 사용(중복 막음)
-    @Column(name = "email", nullable = false, unique = true)
+    @Column(name = "email", nullable = false)
     private String email;
 
     @Column(name = "password", nullable = false, length = 255)
