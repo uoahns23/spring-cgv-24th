@@ -9,6 +9,8 @@ import com.ceos24.springboot.user.domain.User;
 import com.ceos24.springboot.user.repository.UserRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -19,6 +21,7 @@ public class SignupService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private static final String EMAIL_UNIQUE_CONSTRAINT = "uk_users_email";
 
     public SignupResponse signupUser(SignupRequest request) {
         return signup(request, Role.USER);
@@ -29,6 +32,7 @@ public class SignupService {
     }
 
     private SignupResponse signup(SignupRequest request, Role role) {
+        // 이메일 중복 검사
         if (userRepository.existsByEmail(request.email())) {
             throw new GlobalException(ErrorCode.DUPLICATE_EMAIL);
         }
@@ -52,7 +56,31 @@ public class SignupService {
             );
         };
 
-        User savedUser = userRepository.saveAndFlush(user);
-        return SignupResponse.from(savedUser);
+        try {
+            User savedUser = userRepository.saveAndFlush(user);
+            return SignupResponse.from(savedUser);
+
+        } catch (DataIntegrityViolationException e) {
+            if (isEmailUniqueViolation(e)) {
+                throw new GlobalException(ErrorCode.DUPLICATE_EMAIL);
+            }
+            throw e;
+        }
+    }
+
+    private boolean isEmailUniqueViolation(Throwable exception) {
+        Throwable cause = exception;
+
+        while (cause != null) {
+            if (cause instanceof ConstraintViolationException constraintException) {
+                return EMAIL_UNIQUE_CONSTRAINT.equals(
+                        constraintException.getConstraintName()
+                );
+            }
+            cause = cause.getCause();
+        }
+
+        return false;
+
     }
 }
