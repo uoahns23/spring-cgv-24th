@@ -18,8 +18,10 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import com.ceos24.springboot.auth.jwt.JwtAuthenticationEntryPoint;
 import com.ceos24.springboot.auth.jwt.JwtAccessDeniedHandler;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 
 @Configuration
+@EnableMethodSecurity
 public class SecurityConfig {
 
     @Bean
