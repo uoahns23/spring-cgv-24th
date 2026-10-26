@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.*;
 import com.ceos24.springboot.user.security.CustomUserDetails;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
+import java.util.List;
+
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/reservations")
@@ -49,11 +51,13 @@ public class ReservationController {
     )
     @GetMapping("/{reservationId}")
     public ResponseEntity<ReservationResponse> getReservation(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
             @PathVariable Long reservationId
     ) {
-
         return ResponseEntity.ok(
-                reservationService.getReservation(reservationId)
+                reservationService.getReservation(
+                        userDetails.getUserId(), reservationId
+                )
         );
     }
 
@@ -77,5 +81,20 @@ public class ReservationController {
         );
     }
 
+    // 본인 예매 목록 조회
+    @Operation(
+            summary = "본인 예매 목록 조회",
+            description = "로그인한 사용자의 전체 예매 내역을 조회합니다."
+    )
+    @GetMapping
+    public ResponseEntity<List<ReservationResponse>> getMyReservations(
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        return ResponseEntity.ok(
+                reservationService.getMyReservations(
+                        userDetails.getUserId()
+                )
+        );
+    }
 
 }

@@ -2,6 +2,7 @@ package com.ceos24.springboot.reservation.repository;
 
 import com.ceos24.springboot.reservation.domain.ReservationSeat;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.EntityGraph;
 
 import java.util.List;
 
@@ -18,4 +19,11 @@ public interface ReservationSeatRepository extends JpaRepository<ReservationSeat
 
 //  영화 예매 취소할 때 예약된 좌석 삭제
     void deleteAllByReservation_ReservationId(Long reservationId);
+
+    //본인의 예매 ID목록에 해당하는 좌석만 일괄 조회
+    @EntityGraph(attributePaths = "seat")
+    List<ReservationSeat> findAllByReservation_ReservationIdIn(
+            List<Long> reservationIds
+    );
+
 }

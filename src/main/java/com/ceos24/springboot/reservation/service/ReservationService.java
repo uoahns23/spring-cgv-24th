@@ -1,5 +1,7 @@
 package com.ceos24.springboot.reservation.service;
 
+import com.ceos24.springboot.global.exception.ErrorCode;
+import com.ceos24.springboot.global.exception.GlobalException;
 import com.ceos24.springboot.reservation.domain.*;
 import com.ceos24.springboot.reservation.dto.ReservationCreateRequest;
 import com.ceos24.springboot.reservation.dto.ReservationResponse;
@@ -18,11 +20,14 @@ import org.springframework.transaction.annotation.Transactional;
 import com.ceos24.springboot.user.domain.User;
 import com.ceos24.springboot.user.repository.UserRepository;
 
+
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -268,30 +273,32 @@ public class ReservationService {
         return TimeType.Normal;
     }
 
-    // 예매 확인
-    public ReservationResponse getReservation(Long reservationId) {
+    // 예매 단건 조회(예매번호로 확인)
+    public ReservationResponse getReservation(Long userId, Long reservationId) {
 
-        // 예매 조회
-        Reservation reservation = reservationRepository.findById(reservationId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "해당 예매를 찾을 수 없습니다. reservationId="
-                                        + reservationId
-                        )
-                );
+        // 로그인한 사용자의 예매인지 확인 후 조회
+        Reservation reservation = findMyReservation(userId, reservationId);
 
-        //해당 예매에 연결된 좌석 조회
-        List<ReservationSeat> reservationSeats =
-                reservationSeatRepository.findAllByReservation_ReservationId(reservationId);
+        // 예매에 연결된 좌석 조회 및 변환
+        List<Seat> seats = reservationSeatRepository
+                .findAllByReservation_ReservationId(reservation.getReservationId())
+                .stream()
+                .map(ReservationSeat::getSeat)
+                .toList();
 
-        //  ReservationSeat -> Seat 변환
-        List<Seat> seats =
-                reservationSeats.stream()
-                        .map(ReservationSeat::getSeat)
-                        .toList();
-
-        // 예매 정보 + 좌석 정보 반환
         return ReservationResponse.from(reservation, seats);
+    }
+
+    // 사용자 본인의 예매 조회
+    private Reservation findMyReservation(
+            Long userId,
+            Long reservationId
+    ) {
+        return reservationRepository
+                .findByReservationIdAndUser_Id(reservationId, userId)
+                .orElseThrow(() ->
+                        new GlobalException(ErrorCode.RESERVATION_NOT_FOUND)
+                );
     }
 
 
@@ -302,14 +309,9 @@ public class ReservationService {
             Long reservationId
     ){
 
-        // 예매 조회
-        Reservation reservation = reservationRepository.findById(reservationId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "해당 예매를 찾을 수 없습니다. reservationId="
-                                        + reservationId
-                        )
-                );
+        // 로그인한 사용자의 예매인지 확인
+        Reservation reservation =
+                findMyReservation(userId, reservationId);
 
         // 예매 소유권 검사
         if (!reservation.getUser().getId().equals(userId)) {
@@ -340,5 +342,48 @@ public class ReservationService {
                 reservation,
                 seats
         );
+    }
+
+    // 예매 목록 조회
+    public List<ReservationResponse> getMyReservations(Long userId) {
+        // 로그인 사용자의 예매만 조회
+        List<Reservation> reservations = reservationRepository
+                .findAllByUser_IdOrderByReservationAtDesc(userId);
+
+        // 예매가 없으면 빈 목록 반환
+        if (reservations.isEmpty()) {
+            return List.of();
+        }
+
+        // 본인의 예매 ID 목록 추출
+        List<Long> reservationIds = reservations.stream()
+                .map(Reservation::getReservationId)
+                .toList();
+
+        // 좌석을 일괄 조회하고 예매 ID별로 묶기
+        Map<Long, List<Seat>> seatsByReservation =
+                reservationSeatRepository
+                        .findAllByReservation_ReservationIdIn(reservationIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(
+                                reservationSeat ->
+                                        reservationSeat.getReservation()
+                                                .getReservationId(),
+                                Collectors.mapping(
+                                        ReservationSeat::getSeat,
+                                        Collectors.toList()
+                                )
+                        ));
+
+        // 예매별 좌석을 연결해 응답 DTO로 변환
+        return reservations.stream()
+                .map(reservation -> ReservationResponse.from(
+                        reservation,
+                        seatsByReservation.getOrDefault(
+                                reservation.getReservationId(),
+                                List.of()
+                        )
+                ))
+                .toList();
     }
 }
