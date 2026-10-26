@@ -63,7 +63,7 @@ public class ShopController {
         );
     }
 
-//  매점 재고 추가
+    //  매점 재고 추가
     @PatchMapping("/{theaterId}/inventories/{inventoryId}/addStock")
     public ResponseEntity<InventoryResponse> addStock(
             @PathVariable Long theaterId,

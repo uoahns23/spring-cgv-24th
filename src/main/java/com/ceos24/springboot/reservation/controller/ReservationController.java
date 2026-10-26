@@ -20,7 +20,7 @@ public class ReservationController {
 
     private final ReservationService reservationService;
 
-    // 티켓 예매
+    // 영화 티켓 예매
     @Operation(
             summary = "영화 예매",
             description = "상영회차와 관람 인원, 좌석을 선택하여 영화를 예매합니다."

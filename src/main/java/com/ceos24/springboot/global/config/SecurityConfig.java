@@ -84,6 +84,16 @@ public class SecurityConfig {
 
                         // 관리자 전용 API
                         .requestMatchers("/api/admin/**").hasRole("ADMIN") // ROLE_ADMIN
+                        // 영화 등록 API
+                        .requestMatchers(HttpMethod.POST, "/api/movies").hasRole("ADMIN")
+                        // 영화관 등록 API
+                        .requestMatchers(HttpMethod.POST, "/api/theaters"). hasRole("ADMIN")
+                        // 영화 상영회차 등록 API
+                        .requestMatchers(HttpMethod.POST, "/api/screenings").hasRole("ADMIN")
+                        // 매점 재고 등록 API
+                        .requestMatchers(HttpMethod.POST, "/api/shop/*/inventories").hasRole("ADMIN")
+                        // 매점 재고 추가 API
+                        .requestMatchers(HttpMethod.PATCH, "/api/shop/*/inventories/*/addStock").hasRole("ADMIN")
 
 
                         // 그 외 요청은 인증 필요
