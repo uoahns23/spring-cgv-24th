@@ -166,12 +166,12 @@ class ReservationHoldIntegrationTest {
     }
 
     @Test
-    void cancellationReturnsCancledAndReleasesSeatsWithoutCancellationHistory() throws Exception {
+    void cancellationReturnsCanceledAndReleasesSeatsWithoutCancellationHistory() throws Exception {
         ReservationResponse pending = create(userId, screeningId, firstSeatId);
         mockMvc.perform(patch("/api/reservations/{id}/cancel", pending.reservationId())
                         .header("Authorization", "Bearer " + jwtProvider.createAccessToken(userId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("cancled"));
+                .andExpect(jsonPath("$.status").value("canceled"));
         assertThat(savedStatus(pending.reservationId())).isEqualTo(ReservationStatus.Canceled);
         assertThat(reservationSeats.findAllByReservation_ReservationId(pending.reservationId())).isEmpty();
         assertConflict(() -> service.confirmReservation(userId, pending.reservationId()), ErrorCode.INVALID_RESERVATION_STATUS);

@@ -229,7 +229,7 @@ class ReservationAccessIntegrationTest {
         mockMvc.perform(patch("/api/reservations/{id}/cancel", newerA.getReservationId())
                         .header("Authorization", "Bearer " + tokenA))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("cancled"));
+                .andExpect(jsonPath("$.status").value("canceled"));
 
         entityManager.flush();
         entityManager.clear();
