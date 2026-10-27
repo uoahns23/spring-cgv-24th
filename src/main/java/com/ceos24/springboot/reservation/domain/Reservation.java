@@ -12,7 +12,9 @@ import java.time.LocalDateTime;
 
 @Entity
 @Getter
-@Table(name = "reservation")
+@Table(name = "reservation", indexes = {
+        @Index(name = "idx_reservation_expiration", columnList = "status, expires_at")
+})
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Reservation {
 
@@ -53,6 +55,9 @@ public class Reservation {
     @Column(name = "reservation_at")
     private LocalDateTime reservationAt;
 
+    @Column(name = "expires_at")
+    private LocalDateTime expiresAt;
+
     @Builder
     public Reservation(
             User user,
@@ -63,7 +68,8 @@ public class Reservation {
             Integer seniorCount,
             Integer totalPrice,
             ReservationStatus status,
-            LocalDateTime reservationAt
+            LocalDateTime reservationAt,
+            LocalDateTime expiresAt
     ) {
         this.user = user;
         this.screening = screening;
@@ -74,14 +80,36 @@ public class Reservation {
         this.totalPrice = totalPrice;
         this.status = status;
         this.reservationAt = reservationAt;
+        this.expiresAt = expiresAt;
+    }
+
+    // 예매 전 점유시간 설정
+    public boolean expireIfPending(LocalDateTime now) {
+        if (status != ReservationStatus.Pending || expiresAt == null
+                || expiresAt.isAfter(now)) {
+            return false;
+        }
+        status = ReservationStatus.Expired;
+        return true;
+    }
+
+    public void confirm(LocalDateTime now) {
+        if (status != ReservationStatus.Pending || expiresAt == null
+                || !expiresAt.isAfter(now)) {
+            throw new IllegalArgumentException("유효한 대기 예매만 확정할 수 있습니다.");
+        }
+        status = ReservationStatus.Reserved;
     }
 
     // 예매 취소
     public void cancel() {
-        if (this.status == ReservationStatus.Cancled) {
+        if (this.status == ReservationStatus.Canceled) {
             throw new IllegalArgumentException("이미 취소된 예매입니다.");
         }
+        if (this.status == ReservationStatus.Expired) {
+            throw new IllegalArgumentException("만료된 예매는 취소할 수 없습니다.");
+        }
 
-        this.status = ReservationStatus.Cancled;
+        this.status = ReservationStatus.Canceled;
     }
 }

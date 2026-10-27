@@ -5,6 +5,7 @@ import com.ceos24.springboot.global.exception.GlobalException;
 import com.ceos24.springboot.reservation.domain.*;
 import com.ceos24.springboot.reservation.dto.ReservationCreateRequest;
 import com.ceos24.springboot.reservation.dto.ReservationResponse;
+import com.ceos24.springboot.reservation.exception.ReservationExpiredException;
 import com.ceos24.springboot.reservation.repository.PriceRepository;
 import com.ceos24.springboot.reservation.repository.ReservationRepository;
 import com.ceos24.springboot.reservation.repository.ReservationSeatRepository;
@@ -26,6 +27,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -33,6 +35,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ReservationService {
+
+    private static final int HOLD_MINUTES = 10;
 
     private final ReservationRepository reservationRepository;
     private final ScreeningRepository screeningRepository;
@@ -42,6 +46,7 @@ public class ReservationService {
     private final ReservationSeatRepository reservationSeatRepository;
 
     private final UserRepository userRepository;
+    private final ReservationExpirationService expirationService;
 
     // 예매 생성
     @Transactional
@@ -49,6 +54,9 @@ public class ReservationService {
             Long userId,
             ReservationCreateRequest request
     ){
+        // 첫 DB 조회 전에 별도 트랜잭션에서 만료된 점유를 해제한다.
+        expirationService.releaseExpiredSeats(request.screeningId(), request.seatIds());
+
         // 로그인 사용자 조회
         User user = userRepository.findById(userId)
                 .orElseThrow(() ->
@@ -59,7 +67,7 @@ public class ReservationService {
 
         // 1. 상영회차 조회
         Screening screening = screeningRepository
-                .findByIdWithLock(request.screeningId())
+                .findById(request.screeningId())
                 .orElseThrow(() ->
                         new IllegalArgumentException(
                                 "해당 상영회차를 찾을 수 없습니다. screeningId="
@@ -125,9 +133,7 @@ public class ReservationService {
                         );
 
         if (!reservedSeats.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "이미 예약된 좌석이 포함되어 있습니다."
-            );
+            throw new GlobalException(ErrorCode.SEAT_UNAVAILABLE);
         }
 
 
@@ -178,6 +184,7 @@ public class ReservationService {
         );
 
         // 10. Reservation 생성
+        LocalDateTime now = LocalDateTime.now();
         Reservation reservation = Reservation.builder()
                 .user(user)
                 .screening(screening)
@@ -186,8 +193,9 @@ public class ReservationService {
                 .adultCount(request.adultCount())
                 .seniorCount(request.seniorCount())
                 .totalPrice(totalPrice)
-                .status(ReservationStatus.Reserved)
-                .reservationAt(LocalDateTime.now())
+                .status(ReservationStatus.Pending)
+                .reservationAt(now)
+                .expiresAt(now.plusMinutes(HOLD_MINUTES))
                 .build();
 
         // 11. Reservation 저장
@@ -197,6 +205,7 @@ public class ReservationService {
         // 12. ReservationSeat 생성
         List<ReservationSeat> reservationSeats =
                 seats.stream()
+                        .sorted(Comparator.comparing(Seat::getSeatId))
                         .map(seat ->
                                 ReservationSeat.create(
                                         savedReservation,
@@ -207,11 +216,11 @@ public class ReservationService {
                         .toList();
 
         // 13. ReservationSeat 저장 및 UNIQUE 위반 여부 판단
-        try {reservationSeatRepository.saveAllAndFlush(reservationSeats);
+        try {
+            reservationSeatRepository.saveAllAndFlush(reservationSeats);
         } catch (DataIntegrityViolationException e) {
-            throw new IllegalArgumentException(
-                    "이미 예약된 좌석이 포함되어 있습니다."
-            );
+            // 동시에 들어온 요청은 UNIQUE(screening_id, seat_id)가 최종 차단한다.
+            throw new GlobalException(ErrorCode.SEAT_UNAVAILABLE);
         }
 
         return ReservationResponse.from(savedReservation,seats);
@@ -275,6 +284,7 @@ public class ReservationService {
 
     // 예매 단건 조회(예매번호로 확인)
     public ReservationResponse getReservation(Long userId, Long reservationId) {
+        expirationService.releaseExpiredReservationsForUser(userId);
 
         // 로그인한 사용자의 예매인지 확인 후 조회
         Reservation reservation = findMyReservation(userId, reservationId);
@@ -311,7 +321,8 @@ public class ReservationService {
 
         // 로그인한 사용자의 예매인지 확인
         Reservation reservation =
-                findMyReservation(userId, reservationId);
+                reservationRepository.findMyReservationWithLock(reservationId, userId)
+                        .orElseThrow(() -> new GlobalException(ErrorCode.RESERVATION_NOT_FOUND));
 
         // 예매 소유권 검사
         if (!reservation.getUser().getId().equals(userId)) {
@@ -346,6 +357,7 @@ public class ReservationService {
 
     // 예매 목록 조회
     public List<ReservationResponse> getMyReservations(Long userId) {
+        expirationService.releaseExpiredReservationsForUser(userId);
         // 로그인 사용자의 예매만 조회
         List<Reservation> reservations = reservationRepository
                 .findAllByUser_IdOrderByReservationAtDesc(userId);
@@ -385,5 +397,35 @@ public class ReservationService {
                         )
                 ))
                 .toList();
+    }
+
+    // 점유 좌석을 예약된 좌석으로 예매 확정
+    @Transactional(noRollbackFor = ReservationExpiredException.class)
+    public ReservationResponse confirmReservation(Long userId, Long reservationId) {
+
+        // 본인 예매 조회 및 락
+        Reservation reservation = reservationRepository
+                .findMyReservationWithLock(reservationId, userId)
+                .orElseThrow(() -> new GlobalException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        LocalDateTime now = LocalDateTime.now();
+        if (reservation.expireIfPending(now)) {
+            reservationSeatRepository.deleteAllByReservation_ReservationId(reservationId);
+            throw new ReservationExpiredException();
+        }
+        if (reservation.getStatus() == ReservationStatus.Expired) {
+            throw new ReservationExpiredException();
+        }
+        if (reservation.getStatus() != ReservationStatus.Reserved) {
+            if (reservation.getStatus() != ReservationStatus.Pending) {
+                throw new GlobalException(ErrorCode.INVALID_RESERVATION_STATUS);
+            }
+            reservation.confirm(now);
+        }
+
+        List<Seat> seats = reservationSeatRepository
+                .findAllByReservation_ReservationId(reservationId)
+                .stream().map(ReservationSeat::getSeat).toList();
+        return ReservationResponse.from(reservation, seats);
     }
 }

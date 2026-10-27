@@ -28,6 +28,21 @@ public enum ErrorCode {
     ),
 
     // Reservation
+    SEAT_UNAVAILABLE(
+            HttpStatus.CONFLICT,
+            "이미 예매되었거나 다른 사용자가 선택 중인 좌석입니다."
+    ),
+
+    RESERVATION_EXPIRED(
+            HttpStatus.CONFLICT,
+            "좌석 점유 시간 10분이 만료되었습니다. 좌석을 다시 선택해 주세요."
+    ),
+
+    INVALID_RESERVATION_STATUS(
+            HttpStatus.CONFLICT,
+            "현재 상태에서는 예매를 확정할 수 없습니다."
+    ),
+
     RESERVATION_NOT_FOUND(
             HttpStatus.NOT_FOUND,
             "해당 예매를 찾을 수 없습니다."
