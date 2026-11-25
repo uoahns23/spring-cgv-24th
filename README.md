@@ -2156,3 +2156,442 @@ GitHub Actions와 Docker를 이용해 테스트·빌드·이미지 업로드를 
 로컬 빌드 성공뿐 아니라, **Git에 포함된 파일만으로 빌드가 가능한지 확인해야 한다**는 점을 배웠습니다.
 
 
+-----
+[5주차 정리] : (https://app.notion.com/p/CEOS-6-41bde222d8e48008a6ccd533709853c9?source=copy_link)
+# 15. 로컬 모니터링 시스템 구축 및 관리
+ec2를 배포하기 전이므로, 로컬에서 모니터링 시스템을 구축하는 방식을 사용하였습니다.
+
+Spring Boot Actuator, Micrometer, Prometheus, Grafana 구성을 설명하고 로컬 실행, 대시보드 관리, 복원 및 문제 해결 방법으로 로컬 모니티링 시스템에 확인하였습니다.
+
+## 1. 구성과 역할
+
+```text
+Spring Boot 앱 + MySQL
+  └─ Actuator / Micrometer: 앱 상태 및 지표 제공
+       ↑ Prometheus가 /actuator/prometheus를 15초마다 조회
+     Prometheus: 지표 수집 및 시계열 저장
+       ↑ Grafana가 PromQL로 조회
+     Grafana: 대시보드 시각화
+```
+
+| 구성 요소 | 역할 |
+| --- | --- |
+| Actuator | 상태 확인 및 메트릭 조회용 HTTP 엔드포인트 제공 |
+| Micrometer | JVM, HTTP 요청, 커넥션 풀 등의 지표를 계측하고 Prometheus 형식으로 제공 |
+| Prometheus | 앱 지표를 주기적으로 수집하고 시간에 따른 값 저장 |
+| Grafana | Prometheus에 쿼리하여 그래프와 대시보드 표시 |
+
+서버 배포 없이 로컬에서 실행할 수 있습니다. 앱이 실행되고 Prometheus가 앱에 접근할 수 있어야 합니다. 현재 CD는 Docker Hub에 이미지를 업로드하는 단계까지이며, 로컬 모니터링 실행과는 별개입니다.
+
+## 2. 설정 파일 구조
+
+```text
+spring-cgv-24th/
+├── build.gradle
+├── Dockerfile
+├── compose.yml
+├── compose.monitoring.yml
+├── .env                                      # Git 제외
+├── monitoring/
+│   ├── prometheus/
+│   │   └── prometheus.yml
+│   └── grafana/
+│       ├── dashboards/
+│       │   └── cgv.json                       # UI 가져오기용 대시보드
+│       └── provisioning/
+│           └── datasources/
+│               └── prometheus.yml
+└── src/main/resources/
+    ├── application.yaml
+    └── application-monitoring.yaml
+```
+
+`application-monitoring.yaml`은 Spring Boot가 읽고, `compose.monitoring.yml`은 Docker Compose가 읽습니다. 두 파일은 서로 다른 설정 파일입니다.
+
+## 3. Spring Boot 설정
+
+### 3.1 의존성
+
+[build.gradle](build.gradle)에 다음 의존성을 사용합니다. Micrometer 핵심 의존성은 Actuator를 통해 포함됩니다.
+
+```groovy
+implementation 'org.springframework.boot:spring-boot-starter-actuator'
+runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+```
+
+### 3.2 모니터링 프로필
+
+[application-monitoring.yaml](src/main/resources/application-monitoring.yaml)의 내용입니다.
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: cgv-app
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+```
+
+- `health`: 앱 상태 확인 엔드포인트를 노출합니다.
+- `prometheus`: Prometheus 수집용 엔드포인트를 노출합니다.
+- `application`: 수집되는 앱 지표에 `application="cgv-app"` 라벨을 추가합니다.
+- `percentiles-histogram`: HTTP 응답 시간의 p95 등을 계산하기 위한 히스토그램을 제공합니다.
+
+`management`는 `spring`, `logging`과 같은 최상위 설정 이름입니다. YAML에서 항목 순서는 상관없지만 들여쓰기는 중요하며, `spring.management` 아래에 넣으면 올바른 설정 이름이 되지 않습니다.
+
+모니터링용 Compose는 `SPRING_PROFILES_ACTIVE: prod,monitoring`을 설정합니다. 기본 `application.yaml`에 활성화된 프로필의 설정을 합쳐 사용하며, 같은 프로필 설정이 충돌하면 뒤에 지정한 프로필이 우선합니다. 파일이 없는 프로필 때문에 별도 설정 파일을 만들 필요는 없습니다.
+
+
+## 4. Prometheus와 Grafana 연결
+
+### 4.1 Prometheus 수집 설정
+
+[monitoring/prometheus/prometheus.yml](monitoring/prometheus/prometheus.yml):
+
+```yaml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: cgv-app
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - app:8080
+```
+
+`app`은 Compose 서비스 이름입니다. Prometheus가 컨테이너에서 실행되므로 앱 주소에 `localhost:8080`을 사용하지 않습니다. `job="cgv-app"` 라벨은 Prometheus가 수집 시 추가합니다.
+
+### 4.2 Grafana 데이터 소스
+
+[데이터 소스 provisioning 설정](monitoring/grafana/provisioning/datasources/prometheus.yml)을 통해 Grafana 시작 시 `prometheus` 데이터 소스를 자동 등록합니다.
+
+- 접속 주소: `http://prometheus:9090`
+- UID: `cg4k2w2u3da80e`
+- 수집 간격 기준: `15s`
+- `editable: false`: UI 대신 YAML 파일에서 데이터 소스 설정을 관리합니다.
+
+UID는 기존 대시보드의 데이터 소스 참조를 유지하기 위해 사용합니다. 폴더 이름은 `provisioning`이며, `provising`으로 작성하면 현재 Compose 마운트 경로와 달라 자동 등록되지 않습니다.
+
+### 4.3 Compose 구성
+
+[compose.yml](compose.yml)은 앱과 MySQL, 외부 네트워크 `cgv-network`를 정의합니다. [compose.monitoring.yml](compose.monitoring.yml)은 로컬 앱 빌드와 포트, 모니터링 프로필, Prometheus 및 Grafana를 추가합니다.
+
+두 파일을 `-f`로 함께 지정하면 병합되어 실행됩니다. 앱의 이미지 및 환경 변수처럼 같은 키의 값은 뒤에 지정한 파일의 설정을 따릅니다. 모니터링 서비스도 기본 네트워크인 `cgv-network`에 연결됩니다.
+
+브라우저에서는 `localhost`를 사용하고 컨테이너 사이에서는 서비스 이름을 사용합니다. 호스트 포트는 `127.0.0.1`에 바인딩되어 있습니다.
+
+## 5. 로컬 실행
+
+
+### 5.1 최초 실행 및 앱 변경 반영
+
+프로젝트 루트의 PowerShell에서 실행합니다.
+
+```powershell
+# 네트워크가 없는 경우에만 생성
+docker network inspect cgv-network *> $null
+if ($LASTEXITCODE -ne 0) { docker network create cgv-network }
+
+# Dockerfile에서 복사할 JAR 빌드
+.\gradlew.bat clean build
+if ($LASTEXITCODE -ne 0) { throw 'Gradle 빌드에 실패했습니다.' }
+
+docker compose -f compose.yml -f compose.monitoring.yml up -d --build
+docker compose -f compose.yml -f compose.monitoring.yml ps
+```
+
+앱도 Docker에서 실행하므로 IntelliJ에서 따로 실행하지 않습니다. Java 소스, 의존성 또는 Spring 설정을 수정하면 JAR와 앱 이미지를 다시 빌드합니다. `docker compose --build`만으로 Gradle 빌드가 실행되지는 않습니다.
+
+앱 변경이 없고 기존 컨테이너를 다시 실행할 때:
+
+```powershell
+docker compose -f compose.yml -f compose.monitoring.yml up -d
+```
+
+### 5.2 정상 동작 확인
+
+| 순서 | 주소 | 성공 기준 |
+| --- | --- | --- |
+| 1 | http://localhost:8080/actuator/health | `status`가 `UP` |
+| 2 | http://localhost:8080/actuator/prometheus | 텍스트 지표 출력 |
+| 3 | http://localhost:9090/targets | `cgv-app` 대상이 `UP` |
+| 4 | http://localhost:3000 | Grafana 로그인 가능 |
+
+Grafana 계정은 `admin`, 비밀번호는 초기 설정한 `GRAFANA_ADMIN_PASSWORD`입니다. 기존 Grafana 볼륨이 있으면 `.env` 변경만으로 관리자 비밀번호가 바뀌지는 않습니다.
+
+Grafana의 **Explore**에서 `prometheus` 데이터 소스를 선택하고 다음 쿼리를 실행합니다.
+
+```promql
+up{job="cgv-app"}
+```
+
+결과 `1`은 Prometheus가 앱 지표를 성공적으로 수집했다는 뜻입니다. 모든 API나 외부 결제 서비스의 정상 동작까지 보장하지는 않습니다.
+
+## 6. 대시보드와 그래프 확인
+
+현재 저장한 대시보드 이름은 `cgv`입니다. 기본 조회 범위는 최근 15분, 자동 새로고침은 15초입니다. 패널 시각화 유형은 `Time series`를 사용합니다.
+
+### 6.1 JVM 힙 메모리 사용량
+
+```promql
+sum(jvm_memory_used_bytes{job="cgv-app",area="heap"})
+```
+
+표시 단위는 `bytes (IEC)`입니다. JVM 힙 영역에서 현재 사용하는 메모리 합계이며 컨테이너 전체 메모리 사용량과는 다릅니다.
+
+### 6.2 API별 초당 요청 수
+
+```promql
+sum by (uri) (
+  rate(http_server_requests_seconds_count{
+    job="cgv-app",
+    uri=~"/api/.*"
+  }[$__rate_interval])
+)
+```
+
+단위는 `requests/sec`, 범례는 `{{uri}}`입니다. `/api/` 경로에 대해 조회 구간의 초당 요청 수를 계산합니다. `/actuator/` 수집 요청은 제외합니다. `$__rate_interval`은 Grafana가 계산하는 구간 변수이므로 Prometheus UI에서 직접 실행할 때는 `[1m]`과 같은 구간으로 바꿉니다.
+
+### 6.3 API별 p95 응답 시간
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le, uri) (
+    rate(http_server_requests_seconds_bucket{
+      job="cgv-app",
+      uri=~"/api/.*"
+    }[$__rate_interval])
+  )
+)
+```
+
+단위는 `seconds (s)`, 범례는 `{{uri}}`입니다. 해당 구간 요청의 약 95%가 완료되는 시간을 히스토그램으로 추정합니다. 요청이 적으면 값의 변동이 크고, 요청이 없으면 값이 표시되지 않을 수 있습니다.
+
+### 6.4 API 호출로 확인
+
+```powershell
+1..30 | ForEach-Object {
+    curl.exe -s -o NUL http://localhost:8080/api/movies
+    Start-Sleep -Seconds 1
+}
+```
+
+약 30~60초 후 그래프를 확인합니다. HTTP 지표는 요청 후 생성되며 `rate()` 계산에는 여러 번의 수집이 필요합니다. 인증 단계에서 차단된 요청은 URI가 `UNKNOWN`으로 기록될 수 있어 `/api/` 필터에서 제외됩니다.
+
+## 7. 대시보드 저장과 JSON 내보내기의 차이
+
+**대시보드를 매번 `cgv.json`으로 내보낼 필요는 없습니다.** 일상적으로는 Grafana에서 **Save**하면 됩니다. 패널, 쿼리, 레이아웃 등 대시보드 구성을 바꾸고 그 변경을 저장소에도 보관하려는 시점에 JSON을 갱신합니다.
+
+| 저장 대상 | 저장 위치 | 저장 시점 | 내용 |
+| --- | --- | --- | --- |
+| Grafana 대시보드 | `grafana-data` 볼륨 | UI에서 Save | 패널, 쿼리, 레이아웃, 시간 범위 등 |
+| 수집 지표 이력 | `prometheus-data` 볼륨 | Prometheus가 자동 수집 | 시간별 메모리, 요청량, 응답 시간 등의 값 |
+| 대시보드 JSON | 저장소의 `monitoring/grafana/dashboards/cgv.json` | 구성 변경을 저장소에 반영할 때 | 다른 환경에서 가져올 수 있는 대시보드 정의 |
+
+API 요청으로 그래프가 변하거나 새 지표가 수집될 때는 JSON을 다시 내보내지 않습니다. Grafana의 Save는 저장소의 JSON 파일을 자동으로 갱신하지 않으며, JSON에는 실제 지표 이력이나 Grafana 관리자 비밀번호가 포함되지 않습니다.
+
+### 7.1 구성 변경 후 관리 순서
+
+1. Grafana에서 패널, 쿼리, 단위 등을 편집합니다.
+2. **Save**를 눌러 Grafana에 저장합니다.
+3. 저장소에도 반영할 변경이면 **Export**에서 외부 공유용 내보내기 옵션(**Export for sharing externally**)을 사용합니다.
+4. 내려받은 JSON으로 [cgv.json](monitoring/grafana/dashboards/cgv.json)을 갱신합니다.
+5. JSON 변경을 확인한 뒤 관련 설정 및 문서와 함께 커밋합니다.
+
+현재 내보낸 JSON의 `DS_PROMETHEUS`는 가져올 환경에서 데이터 소스를 선택하기 위한 입력입니다. 화면의 메뉴 이름은 Grafana 버전에 따라 조금 다를 수 있습니다.
+
+### 7.2 다른 환경에서 가져오기
+
+1. Compose를 실행하고 Prometheus 데이터 소스 연결을 확인합니다.
+2. Grafana에서 **Dashboards → New → Import**를 선택합니다.
+3. `monitoring/grafana/dashboards/cgv.json`을 업로드합니다.
+4. 데이터 소스 입력에서 `prometheus`를 선택하고 가져옵니다.
+5. 같은 UID의 대시보드가 있으면 기존 구성을 덮어쓸지 확인합니다. 별도 사본이 필요하면 가져오기 화면에서 UID를 변경합니다.
+
+현재 JSON은 **UI 가져오기용**입니다. Compose를 실행할 때 데이터 소스는 자동 등록되지만 대시보드 JSON은 자동 등록되지 않습니다. 기존 Grafana 볼륨에 대시보드가 저장돼 있다면 매번 가져올 필요도 없습니다.
+
+JSON은 대시보드 정의의 백업이며 전체 데이터 백업은 아닙니다. 지표 이력이나 Grafana의 다른 설정까지 복원하려면 각 데이터 볼륨의 별도 백업이 필요합니다.
+
+## 8. 실행 중 관리
+
+### 8.1 컨테이너 상태와 로그
+
+```powershell
+docker compose -f compose.yml -f compose.monitoring.yml ps -a
+docker compose -f compose.yml -f compose.monitoring.yml logs --tail 100 app
+docker compose -f compose.yml -f compose.monitoring.yml logs --tail 100 prometheus
+docker compose -f compose.yml -f compose.monitoring.yml logs --tail 100 grafana
+```
+
+컨테이너의 `Up` 표시는 앱 기동 완료를 보장하지 않습니다. 앱 로그에 `Started Application`이 표시되고 health 요청에 응답하는지 함께 확인합니다. 재시작을 반복하는 경우 최근 앱 로그의 첫 원인 예외를 확인합니다.
+
+### 8.2 수집 설정 및 데이터 소스 변경
+
+Prometheus 수집 설정을 수정한 뒤에는 서비스를 다시 생성해 설정을 적용합니다.
+
+```powershell
+docker compose -f compose.yml -f compose.monitoring.yml up -d --force-recreate prometheus
+```
+
+Grafana 데이터 소스 YAML을 수정한 뒤에는 서비스를 다시 생성하여 provisioning을 적용합니다.
+
+```powershell
+docker compose -f compose.yml -f compose.monitoring.yml up -d --force-recreate grafana
+```
+
+각 명령은 기존 데이터 볼륨을 유지합니다. 적용 후 Prometheus의 Targets와 Grafana의 Explore를 다시 확인합니다. 앱의 Spring 설정 변경은 JAR와 앱 이미지 재빌드가 필요합니다.
+
+### 8.3 종료 및 데이터 유지
+
+```powershell
+docker compose -f compose.yml -f compose.monitoring.yml down
+```
+
+일반 `down`은 컨테이너와 Compose가 관리하는 네트워크를 정리하지만 데이터 볼륨을 삭제하지 않습니다. 이 프로젝트의 `cgv-network`는 외부 네트워크이므로 유지됩니다. 같은 Compose 프로젝트 이름과 볼륨을 사용해 다시 실행하면 기존 데이터를 사용합니다.
+
+`down -v`는 MySQL 데이터, Prometheus 이력, Grafana 설정을 담은 볼륨까지 삭제하므로 일반 종료에는 사용하지 않습니다. 볼륨은 Docker 호스트의 로컬 저장소이며 PC나 Docker 데이터가 손실되면 함께 잃을 수 있습니다.
+
+## 9. 문제 해결
+
+| 증상 | 확인 및 조치 |
+| --- | --- |
+| `ERR_EMPTY_RESPONSE` | 앱 기동 중이거나 실패했는지 앱 로그 확인. JAR와 이미지가 최신인지 확인 |
+| health 접속 실패 | 경로가 `/actuator/health`인지 확인. `/acturator/health`는 오타 |
+| `401` 또는 `403` | Actuator GET 요청 허용 규칙이 `anyRequest()`보다 앞에 있는지 확인 |
+| `pattern must start with a /` | 보안 경로의 시작 문자가 `/`인지 확인. `.actuator/prometheus` 수정 후 재빌드 |
+| Prometheus 대상 `DOWN` | Targets의 오류 확인. `app:8080`, 앱 기동 상태, 공통 네트워크 연결 확인 |
+| Grafana 데이터 소스 미등록 | `provisioning/datasources` 경로와 Compose 마운트 확인 후 Grafana 재생성 |
+| Grafana 연결 실패 | 데이터 소스 주소가 `http://prometheus:9090`인지 확인 |
+| `No visualization configured` | 패널에서 Time series와 Prometheus 데이터 소스 선택 |
+| `No data` | 시간 범위, API 요청 발생 여부, job 및 URI 라벨 필터, 수집 상태 확인 |
+| p95에 값이 없음 | 히스토그램 설정 반영 여부와 해당 구간의 API 요청 여부 확인 |
+| Grafana 로그인 실패 | 기존 볼륨의 비밀번호인지 확인. `.env` 수정만으로 기존 비밀번호는 바뀌지 않음 |
+| 재실행 후 대시보드가 안 보임 | 같은 Compose 프로젝트와 Grafana 볼륨인지 확인. 새 환경이면 JSON 가져오기 |
+
+## 10. 현재 범위와 확장
+
+현재 구성은 로컬 앱의 메트릭 수집 및 시각화를 제공합니다. MySQL 컨테이너 자체의 상세 지표, 로그 검색, 장애 알림 및 결제 전용 비즈니스 지표는 별도 구성하지 않았습니다. 앱의 커넥션 풀 지표와 MySQL 서버 자체의 성능 지표는 구분해야 합니다.
+
+필요에 따라 다음을 추가할 수 있습니다.
+
+- API 오류율 및 DB 커넥션 풀 패널
+- 결제 실패, 미확정 결제, 복구 재시도 횟수 등 Micrometer 사용자 정의 지표
+- 장애 조건에 따른 Grafana 알림과 알림 수신 채널
+- Loki 등을 이용한 로그 수집과 조회
+
+서버 배포 시에는 관리 엔드포인트와 Grafana의 접근 제어, 데이터 저장 및 보존 정책, 실행 환경에 맞는 이미지 버전 고정을 함께 검토합니다. 현재 Compose의 Prometheus와 Grafana 이미지는 `latest` 태그를 사용합니다.
+
+### 참고 자료
+
+- [Spring Boot Actuator 엔드포인트](https://docs.spring.io/spring-boot/reference/actuator/endpoints.html)
+- [Spring Boot 메트릭](https://docs.spring.io/spring-boot/reference/actuator/metrics.html)
+- [Prometheus 쿼리 함수](https://prometheus.io/docs/prometheus/latest/querying/functions/)
+- [Grafana provisioning](https://grafana.com/docs/grafana/latest/administration/provisioning/)
+
+-------------------
+---
+
+# 16 트랜잭션 전파와 인덱스
+
+[7주차 정리](https://app.notion.com/p/CEOS-7-423de222d8e48088bc8bf20f0db0d959?source=copy_link)
+
+## 16-1 Spring 트랜잭션 전파 속성
+
+트랜잭션 전파 속성은 `@Transactional` 메서드를 호출할 때, 호출한 쪽의 트랜잭션에 참여할지, 새로 시작할지, 트랜잭션 없이 실행할지를 결정한다.
+
+| 전파 속성 | 기존 트랜잭션이 있을 때 | 기존 트랜잭션이 없을 때 |
+| --- | --- | --- |
+| `REQUIRED` | 기존 트랜잭션에 참여 | 새 트랜잭션 시작 |
+| `REQUIRES_NEW` | 기존 트랜잭션을 일시 중단하고 새 트랜잭션 시작 | 새 트랜잭션 시작 |
+| `SUPPORTS` | 기존 트랜잭션에 참여 | 트랜잭션 없이 실행 |
+| `MANDATORY` | 기존 트랜잭션에 참여 | 예외 발생 |
+| `NOT_SUPPORTED` | 기존 트랜잭션을 일시 중단하고 트랜잭션 없이 실행 | 트랜잭션 없이 실행 |
+| `NEVER` | 예외 발생 | 트랜잭션 없이 실행 |
+| `NESTED` | 같은 트랜잭션에서 저장점(savepoint)을 사용해 부분 롤백 가능 | 새 트랜잭션 시작 |
+
+### `REQUIRED`
+
+`@Transactional`의 기본값이다. 상위와 하위 메서드에 각각 논리적인 트랜잭션 범위가 생겨도, 기존 트랜잭션에 참여하면 실제 DB 커밋과 롤백은 같은 물리 트랜잭션에서 일어난다.
+
+하위 메서드에서 롤백 대상 예외가 발생해 공유 트랜잭션이 `rollback-only`로 표시되면, 상위 메서드에서 예외를 잡더라도 커밋할 수 없다. 상위 메서드가 정상 반환해 커밋을 시도하는 시점에는 `UnexpectedRollbackException`이 발생할 수 있다.
+
+### `REQUIRES_NEW`
+
+항상 독립적인 물리 트랜잭션을 시작한다. 하위 작업이 커밋되면 이후 상위 작업이 롤백되어도 그 결과는 유지된다. 하위 트랜잭션의 롤백 상태는 독립적이지만, 예외가 상위 메서드까지 전파되면 상위 트랜잭션에도 해당 메서드의 롤백 규칙이 적용된다.
+
+기존 트랜잭션이 이미 DB 커넥션을 확보했다면, 일시 중단된 동안에도 그 커넥션을 점유할 수 있다. 이때 하위 작업에 별도 커넥션이 필요하므로 중첩 호출이 많아지면 커넥션 풀이 부족해질 수 있다. `NESTED`는 같은 물리 트랜잭션 안에서 저장점까지 되돌리는 방식이며, 사용 가능 여부는 트랜잭션 매니저와 JDBC 지원에 따라 달라진다.
+
+- [Spring 공식 문서 — Transaction Propagation](https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/tx-propagation.html)
+- [Spring 공식 문서 — Propagation](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/transaction/annotation/Propagation.html)
+
+## 16-2. CGV 서비스의 트랜잭션 분석 및 개선
+
+### 1 영화 예매 — 만료된 좌석 점유 해제
+
+`ReservationExpirationService`에는 `REQUIRES_NEW`를 적용했다. 만료된 좌석 점유 해제는 새 예매의 성공 여부와 관계없이 반영되어야 한다. 만료 처리와 새 예매를 같은 트랜잭션에 넣으면 새 예매가 실패했을 때 이미 만료된 좌석의 해제까지 롤백될 수 있다.
+
+1. `Pending` 상태이고 점유 시간이 지난 예매를 조회한다.
+2. 예매를 비관적 락으로 다시 조회한다.
+3. 락을 기다리는 동안 결제가 확정되었을 수 있으므로, 락을 획득한 뒤 상태와 만료 시각을 다시 확인한다.
+4. 여전히 만료 대상이면 좌석 점유를 해제하고 별도 트랜잭션에서 커밋한다.
+
+### 2 매점 주문 — 만료 처리와 주문 작업의 실행 순서 분리
+
+기존에는 주문이나 조회 트랜잭션이 먼저 시작된 상태에서 만료 처리를 호출했다. 바깥 트랜잭션이 커넥션을 이미 확보한 경우, 만료 처리에 두 번째 커넥션이 필요했다.
+
+진입점에는 `NEVER`를 적용해 이미 트랜잭션이 열린 상태에서 호출되는 경우를 차단했다. 만료 처리를 먼저 실행하고 커밋한 뒤, 별도 서비스에서 주문 생성·조회 또는 결제 준비에 필요한 트랜잭션을 시작하도록 변경했다.
+
+```text
+진입점(NEVER) → 만료 처리(REQUIRES_NEW) 및 커밋 → 후속 작업(REQUIRED)
+```
+
+- 만료 처리가 끝나 커넥션을 반환한 뒤 후속 작업을 시작한다. 주문 생성이나 결제 준비가 실패해도 만료 처리로 복원된 재고는 유지된다.
+- 주문 생성에서 재고 차감과 주문 저장은 하나의 트랜잭션으로 묶었다. 주문 저장에 실패하면 재고 차감도 함께 롤백된다.
+- 조회 작업에는 `@Transactional(readOnly = true)`를 적용했다.
+- `ShopService`의 진입점과 `ShopTransactionService`의 실제 DB 작업을 분리했다. Spring의 기본 프록시 방식에서는 `this.createOrderInTransaction()`처럼 같은 빈 내부에서 호출하면 프록시를 거치지 않는다. 별도 Spring 빈을 호출하면 해당 메서드의 트랜잭션 설정이 적용된다.
+
+## 16-3. 데이터베이스 인덱스
+
+인덱스는 검색 조건에 맞는 데이터를 빠르게 찾기 위한 자료구조다. MySQL InnoDB에서 기본 키가 정의되어 있으면 기본 키가 클러스터드 인덱스가 되고, 해당 인덱스에 행 데이터가 저장된다. 보조 인덱스에는 인덱스 키와 기본 키가 저장된다. 보조 인덱스에 없는 컬럼이 필요하면 이 기본 키로 클러스터드 인덱스를 추가 조회한다.
+
+### 1 인덱스 종류와 활용
+
+| 종류 | 동작 원리 | 장점 | 비용 및 제약 | 활용 예시 |
+| --- | --- | --- | --- | --- |
+| **B-Tree / B+Tree** | 정렬된 키를 따라 균형 트리를 탐색한다. B+Tree는 내부 노드에 탐색 키를 두고 리프 노드를 연결한다. | 동등 검색, 범위 검색, 정렬에 활용할 수 있다. B+Tree는 연결된 리프를 따라 범위를 순차 탐색하기 좋다. | 인덱스 키가 바뀌면 인덱스도 갱신해야 한다. 삽입 과정에서 페이지 분할이 발생할 수 있다. | 이메일로 회원 조회, 기간별 상영회차 조회 |
+| **Hash** | 검색 키를 해시 함수에 넣어 대응하는 버킷을 찾는다. | `=`처럼 정확히 일치하는 키를 빠르게 찾을 수 있다. | 키의 정렬 순서를 활용할 수 없어 범위 검색이나 정렬에 적합하지 않다. 해시 충돌이 발생할 수 있고, DBMS와 스토리지 엔진에 따라 지원 범위가 다르다. | 정확한 키로 조회하는 `MEMORY` 테이블 |
+| **Bitmap** | 값별로 각 행의 해당 여부를 0과 1의 비트맵으로 표현한다. | `AND`, `OR` 비트 연산으로 여러 조건을 빠르게 결합할 수 있다. | 값의 종류가 많으면 관리할 비트맵이 늘 수 있고, 갱신이 빈번한 환경에서는 유지 비용과 동시성에 유의해야 한다. | 상태·상영 유형처럼 값의 종류가 적은 컬럼을 조합하는 통계 조회 |
+
+CGV의 회원 로그인처럼 이메일로 계정 한 건을 조회한다면 `UNIQUE` B-Tree 계열 인덱스를 활용할 수 있다. `WHERE email = ?` 조회에 쓰이면서 이메일 중복도 DB에서 막을 수 있다. 이미 이메일에 `UNIQUE` 인덱스가 있다면 같은 컬럼에 일반 인덱스를 추가할 필요는 없다.
+
+### 2 인덱스를 추가할 때 확인할 점
+
+- **실제 쿼리와 컬럼 순서**를 확인한다. 예를 들어 영화관을 지정한 뒤 상영 시각 범위를 조회한다면 `(theater_id, start_at)`처럼 동등 조건과 범위 조건을 함께 고려할 수 있다.
+- **카디널리티와 데이터 분포**를 확인한다. `status`처럼 값의 종류가 적은 컬럼은 조건에 맞는 행이 많을 수 있으므로, 단일 인덱스의 효과는 실제 분포에 따라 달라진다.
+- **쓰기 비용과 저장 공간**을 함께 고려한다. 인덱스를 추가하면 `INSERT`, `DELETE`, 인덱스 컬럼의 `UPDATE`에 인덱스 유지 비용이 생긴다.
+- **실행 계획**에서 인덱스 선택 여부와 읽는 행 수, 정렬 수행 여부를 확인한다. 성능을 비교할 때는 대표 데이터를 기준으로 `EXPLAIN ANALYZE`를 활용할 수 있다.
+
+### 3 커버링 인덱스
+
+쿼리의 조건과 결과에 필요한 컬럼을 인덱스가 모두 포함하면, 인덱스에서 결과를 얻어 테이블 행을 추가로 읽는 비용을 줄일 수 있다. 이를 커버링 인덱스라고 한다.
+
+예를 들어 InnoDB의 `users` 테이블에서 `id`가 기본 키이고 `email`에 보조 인덱스가 있다면, `SELECT id FROM users WHERE email = ?`는 해당 인덱스로 커버할 수 있다. 이메일 보조 인덱스에 기본 키인 `id`도 저장되기 때문이다. `EXPLAIN`의 `Extra`에서 `Using index`로 확인할 수 있다. 실제 로그인에서는 비밀번호 검증에 필요한 컬럼도 조회하므로, 이 예시는 회원 ID만 조회하는 경우에 해당한다.
+
+
+## 16-4. 성능 최적화 — 매점 재고 목록 캐싱
+
+매점 재고 목록은 극장 ID를 키로 **5초간 캐싱**했다. 캐시가 적중하면 저장된 목록을 반환한다. 캐시가 비어 있으면 DB에서 재고와 메뉴를 한 번에 조회해 응답을 만든 뒤 저장한다.
+
+재고 추가, 주문 생성으로 인한 차감, 취소·만료·환불로 인한 재고 복원이 **DB에 커밋된 뒤** 해당 극장의 캐시를 비운다. 커밋 전에 캐시를 비우면 그 사이에 들어온 조회가 변경 전 재고를 읽어 다시 캐싱할 수 있기 때문이다.
+
+캐시가 적중해도 만료 주문 확인은 수행한다. 따라서 캐싱으로 줄어드는 쿼리는 재고·메뉴 목록 조회이며, 만료 주문 확인 쿼리는 계속 실행된다.
